@@ -56,7 +56,7 @@ func (s *scanner) scanDir(dir string) {
 			if strings.Contains(e.Name(), s.pattern) {
 				s.foundNames <- filepath.Join(dir, e.Name())
 			}
-			if e.IsDir() {
+			if e.IsDir() && e.Mode() & os.ModeSymlink == 0 {
 				s.scanDir(filepath.Join(dir, e.Name()))
 			}
 		}
