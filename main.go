@@ -1,17 +1,21 @@
 package main
 
+//#include <dirent.h>
+//#include <stdlib.h>
+import "C"
+
 import (
+	"bytes"
 	"flag"
-	"io"
 	"os"
 	"path/filepath"
-	"strings"
+	"unsafe"
 )
 
 func main() {
 	root := flag.String("in", ".", "Search within `dir`")
 	flag.Parse()
-	s := scanner{flag.Arg(0), make(chan string, 8), make(chan error, 8)}
+	s := scanner{[]byte(flag.Arg(0)), make(chan string, 8), make(chan error, 8)}
 	go s.scanRootDir(*root)
 	for {
 		select {
@@ -27,7 +31,7 @@ func main() {
 }
 
 type scanner struct {
-	pattern    string
+	pattern    []byte
 	foundNames chan string
 	errors     chan error
 }
@@ -38,27 +42,32 @@ func (s *scanner) scanRootDir(dir string) {
 }
 
 func (s *scanner) scanDir(dir string) {
-	d, err := os.Open(dir)
+	cdir := C.CString(dir)
+	defer C.free(unsafe.Pointer(cdir))
+	d, err := C.opendir(cdir)
 	if err != nil {
 		s.errors <- err
 		return
 	}
-	defer d.Close()
+	defer C.closedir(d)
 	for {
-		entries, err := d.Readdir(200)
+		entry, err := C.readdir(d)
 		if err != nil {
-			if err != io.EOF {
-				s.errors <- err
-			}
+			s.errors <- err
 			return
 		}
-		for _, e := range entries {
-			if strings.Contains(e.Name(), s.pattern) {
-				s.foundNames <- filepath.Join(dir, e.Name())
-			}
-			if e.IsDir() && e.Mode() & os.ModeSymlink == 0 {
-				s.scanDir(filepath.Join(dir, e.Name()))
-			}
+		if entry == nil {
+			return
+		}
+		name := (*(*[1 << 30]byte)(unsafe.Pointer(&entry.d_name)))[:entry.d_namlen]
+		if (len(name) == 0 || name[0] == '.') && (len(name) <= 1 || name[1] == '.') {
+			continue
+		}
+		if bytes.Contains(name, s.pattern) {
+			s.foundNames <- filepath.Join(dir, string(name))
+		}
+		if entry.d_type == C.DT_DIR {
+			s.scanDir(filepath.Join(dir, string(name)))
 		}
 	}
 }
