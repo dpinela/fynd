@@ -9,39 +9,54 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync"
 	"unsafe"
 )
 
 func main() {
 	root := flag.String("in", ".", "Search within `dir`")
 	flag.Parse()
-	s := scanner{[]byte(flag.Arg(0)), make(chan string, 8), make(chan error, 8)}
-	go s.scanRootDir(*root)
+	s := scanner{pattern: []byte(flag.Arg(0)), dirs: make(chan string), foundNames: make(chan string, 8), errors: make(chan error, 8)}
+	for i := 0; i < runtime.NumCPU(); i++ {
+		go s.work()
+	}
+	s.wg.Add(1)
+	s.dirs <- *root
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
 	for {
 		select {
 		case name := <-s.foundNames:
 			os.Stdout.WriteString(name + "\n")
 		case err := <-s.errors:
-			if err == nil {
-				return
-			}
 			os.Stderr.WriteString(err.Error() + "\n")
+		case <-done:
+			return
 		}
 	}
 }
 
 type scanner struct {
 	pattern    []byte
+	dirs       chan string
 	foundNames chan string
 	errors     chan error
+
+	wg sync.WaitGroup
 }
 
-func (s *scanner) scanRootDir(dir string) {
-	s.scanDir(dir)
-	close(s.errors)
+func (s *scanner) work() {
+	for dir := range s.dirs {
+		s.scanDir(dir)
+	}
 }
 
 func (s *scanner) scanDir(dir string) {
+	defer s.wg.Done()
 	cdir := C.CString(dir)
 	defer C.free(unsafe.Pointer(cdir))
 	d, err := C.opendir(cdir)
@@ -56,7 +71,7 @@ func (s *scanner) scanDir(dir string) {
 			s.errors <- err
 			return
 		}
-		if entry == nil {
+		if entry == nil { // EOF
 			return
 		}
 		name := (*(*[1 << 30]byte)(unsafe.Pointer(&entry.d_name)))[:entry.d_namlen]
@@ -67,7 +82,13 @@ func (s *scanner) scanDir(dir string) {
 			s.foundNames <- filepath.Join(dir, string(name))
 		}
 		if entry.d_type == C.DT_DIR {
-			s.scanDir(filepath.Join(dir, string(name)))
+			subdir := filepath.Join(dir, string(name))
+			s.wg.Add(1)
+			select {
+			case s.dirs <- subdir:
+			default:
+				s.scanDir(subdir)
+			}
 		}
 	}
 }
