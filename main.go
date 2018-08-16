@@ -9,6 +9,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sync"
 	"unsafe"
@@ -17,7 +18,12 @@ import (
 func main() {
 	root := flag.String("in", ".", "Search within `dir`")
 	flag.Parse()
-	s := scanner{pattern: []byte(flag.Arg(0)), dirs: make(chan string), foundNames: make(chan string, 8), errors: make(chan error, 8)}
+	re, err := regexp.Compile("(?i)" + flag.Arg(0))
+	if err != nil {
+		os.Stderr.WriteString(err.Error() + "\n")
+		return
+	}
+	s := scanner{pattern: re, dirs: make(chan string), foundNames: make(chan string, 8), errors: make(chan error, 8)}
 	for i := 0; i < runtime.NumCPU(); i++ {
 		go s.work()
 	}
@@ -41,7 +47,7 @@ func main() {
 }
 
 type scanner struct {
-	pattern    []byte
+	pattern    *regexp.Regexp
 	dirs       chan string
 	foundNames chan string
 	errors     chan error
@@ -80,7 +86,7 @@ func (s *scanner) scanDir(dir string) {
 		if (len(name) == 0 || name[0] == '.') && (len(name) <= 1 || name[1] == '.') {
 			continue
 		}
-		if bytes.Contains(name, s.pattern) {
+		if s.pattern.Match(name) {
 			s.foundNames <- filepath.Join(dir, string(name))
 		}
 		if entry.d_type == C.DT_DIR {
