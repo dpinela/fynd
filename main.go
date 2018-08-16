@@ -74,7 +74,9 @@ func (s *scanner) scanDir(dir string) {
 		if entry == nil { // EOF
 			return
 		}
-		name := (*(*[1 << 30]byte)(unsafe.Pointer(&entry.d_name)))[:entry.d_namlen]
+		namep := (*[1 << 30]byte)(unsafe.Pointer(&entry.d_name))
+		namlen := bytes.IndexByte((*namep)[:1<<30], 0)
+		name := (*namep)[:namlen]
 		if (len(name) == 0 || name[0] == '.') && (len(name) <= 1 || name[1] == '.') {
 			continue
 		}
