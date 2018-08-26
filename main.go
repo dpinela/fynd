@@ -17,13 +17,16 @@ import (
 
 func main() {
 	root := flag.String("in", ".", "Search within `dir`")
+	invert := flag.Bool("not", false, "List files that don't match the pattern")
 	flag.Parse()
 	re, err := regexp.Compile("(?i)" + flag.Arg(0))
 	if err != nil {
 		os.Stderr.WriteString(err.Error() + "\n")
 		return
 	}
-	s := scanner{pattern: re, dirs: make(chan string), foundNames: make(chan string, 8), errors: make(chan error, 8)}
+	s := scanner{
+		pattern: re, invert: *invert,
+		dirs: make(chan string), foundNames: make(chan string, 8), errors: make(chan error, 8)}
 	for i := 0; i < runtime.NumCPU(); i++ {
 		go s.work()
 	}
@@ -47,7 +50,9 @@ func main() {
 }
 
 type scanner struct {
-	pattern    *regexp.Regexp
+	pattern *regexp.Regexp
+	invert  bool
+
 	dirs       chan string
 	foundNames chan string
 	errors     chan error
@@ -86,7 +91,7 @@ func (s *scanner) scanDir(dir string) {
 		if (len(name) == 0 || name[0] == '.') && (len(name) <= 1 || name[1] == '.') {
 			continue
 		}
-		if s.pattern.Match(name) {
+		if s.pattern.Match(name) == !s.invert {
 			s.foundNames <- filepath.Join(dir, string(name))
 		}
 		if entry.d_type == C.DT_DIR {
